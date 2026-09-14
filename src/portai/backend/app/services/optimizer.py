@@ -217,6 +217,10 @@ def optimize_berths(port_id: int, db: Session) -> dict[str, Any]:
             "improvement_percent": 0.0,
         }
 
+    # Only optimize across berths for terminals actually present in the data
+    active_terminals = set(v.terminal for v in vessels)
+    berths = [b for b in berths if b.terminal in active_terminals]
+
     now = datetime.utcnow()
     available = [b for b in berths if b.status != "maintenance"]
     free_at: dict[int, datetime] = {b.id: now for b in available}
@@ -237,37 +241,36 @@ def optimize_berths(port_id: int, db: Session) -> dict[str, Any]:
     total_wait_after = 0.0
 
     for v in sorted(vessels, key=_sort_key_optimised):
-        # 1. Try home terminal berths
+        # 1. Best home terminal berth
         home_candidates = [
             b for b in available
             if b.terminal == v.terminal and _berth_fits(b, v.size)
         ]
+        best_home = min(home_candidates, key=lambda b: max(v.eta, free_at[b.id])) if home_candidates else None
+        home_wait = (max(v.eta, free_at[best_home.id]) - v.eta).total_seconds() / 3600 if best_home else float('inf')
 
-        # 2. If none, try neighbours
-        neighbour_candidates: list[tuple[Berth, str]] = []
-        if not home_candidates:
-            for nb in NEIGHBOURS.get(v.terminal, []):
-                nb_berths = [
-                    b for b in available
-                    if b.terminal == nb and _berth_fits(b, v.size)
-                ]
-                for b in nb_berths:
-                    neighbour_candidates.append((b, nb))
+        # 2. Check active neighbour terminal berths (alternate routing)
+        active_neighbours = [nb for nb in NEIGHBOURS.get(v.terminal, []) if nb in active_terminals]
+        neighbour_candidates = [
+            b for b in available
+            if b.terminal in active_neighbours and _berth_fits(b, v.size)
+        ]
+        best_nbr = min(neighbour_candidates, key=lambda b: max(v.eta, free_at[b.id])) if neighbour_candidates else None
+        nbr_wait = (max(v.eta, free_at[best_nbr.id]) - v.eta).total_seconds() / 3600 if best_nbr else float('inf')
 
-        if home_candidates:
-            # Pick berth that minimises vessel wait: min max(ETA, free_at)
-            chosen = min(
-                home_candidates,
-                key=lambda b: max(v.eta, free_at[b.id]),
-            )
+        # If a neighbour berth saves more than 1 hour of queue delay, reroute!
+        if best_nbr and nbr_wait + 1.0 < home_wait:
+            chosen = best_nbr
+            is_move = True
+            dest_terminal = chosen.terminal
+        elif best_home:
+            chosen = best_home
             is_move = False
             dest_terminal = v.terminal
-        elif neighbour_candidates:
-            chosen, dest_terminal = min(
-                neighbour_candidates,
-                key=lambda bt: max(v.eta, free_at[bt[0].id]),
-            )
+        elif best_nbr:
+            chosen = best_nbr
             is_move = True
+            dest_terminal = chosen.terminal
         else:
             # Absolute fallback: any fitting berth across the whole port
             fallback = [b for b in available if _berth_fits(b, v.size)]
@@ -361,6 +364,11 @@ def optimize_cranes(
         for v in db.query(Vessel).filter(Vessel.port_id == port_id).all()
     }
 
+    # Only optimize cranes for terminals actually present in the data
+    if vessels:
+        active_terminals = set(v.terminal for v in vessels.values())
+        cranes = [c for c in cranes if c.terminal in active_terminals]
+
     # Index available cranes by terminal
     cranes_by_terminal: dict[str, list[Crane]] = {}
     for c in cranes:
@@ -388,51 +396,29 @@ def optimize_cranes(
             )
         )
 
-        # ── Pass 1: guaranteed minimums ───────────────────────────────────────
-        allocated: dict[str, list[Crane]] = {a["vessel_code"]: [] for a in t_assignments}
-        pool_remaining = list(pool)
+        # ── Allocate cranes based on vessel size, priority, and volume ───────
+        allocated: dict[str, list[Crane]] = {}
 
         for a in t_assignments:
             vc = a["vessel_code"]
             v  = vessels.get(vc)
             if v is None:
                 continue
-            need = _crane_demand_min(v.size)
-            given = pool_remaining[:need]
-            pool_remaining = pool_remaining[need:]
-            allocated[vc].extend(given)
+            if not pool:
+                allocated[vc] = []
+                continue
 
-        # ── Pass 2: weighted bonus cranes ─────────────────────────────────────
-        # Compute weight for each vessel
-        if pool_remaining:
-            weights: dict[str, float] = {}
-            for a in t_assignments:
-                vc = a["vessel_code"]
-                v  = vessels.get(vc)
-                if v is None:
-                    continue
-                # Only eligible if not yet at maximum
-                at_max = len(allocated[vc]) >= _crane_demand_max(v.size)
-                if not at_max:
-                    w = v.containers * PRIORITY_MULTIPLIER.get(v.priority, 1.0)
-                    weights[vc] = w
+            # Urgent or High-volume vessels get maximum crane throughput (3-4 cranes)
+            if a.get("priority") in ("urgent", "high") or a.get("containers", 0) >= 4000:
+                needed = min(_crane_demand_max(v.size), pool_size)
+            else:
+                needed = min(_crane_demand_min(v.size), pool_size)
 
-            total_weight = sum(weights.values()) or 1.0
-            bonus_pool   = list(pool_remaining)
-
-            for a in t_assignments:
-                if not bonus_pool:
-                    break
-                vc = a["vessel_code"]
-                v  = vessels.get(vc)
-                if v is None or vc not in weights:
-                    continue
-                max_extra = _crane_demand_max(v.size) - len(allocated[vc])
-                bonus = math.ceil((weights[vc] / total_weight) * len(bonus_pool))
-                bonus = min(bonus, max_extra, len(bonus_pool))
-                if bonus > 0:
-                    allocated[vc].extend(bonus_pool[:bonus])
-                    bonus_pool = bonus_pool[bonus:]
+            needed = max(needed, 1)
+            # Pick cranes from the terminal's crane pool
+            offset = abs(hash(vc)) % pool_size
+            assigned = [pool[(offset + k) % pool_size] for k in range(needed)]
+            allocated[vc] = assigned
 
         # ── Build output records ──────────────────────────────────────────────
         cranes_used = 0
@@ -491,6 +477,10 @@ def optimize_berths_from_lists(
             "improvement_percent": 0.0,
         }
 
+    if vessels:
+        active_terminals = set(v.terminal for v in vessels)
+        berths = [b for b in berths if b.terminal in active_terminals]
+
     now       = datetime.utcnow()
     available = [b for b in berths if b.status != "maintenance"]
     free_at: dict[int, datetime] = {b.id: now for b in available}
@@ -504,25 +494,36 @@ def optimize_berths_from_lists(
     total_wait_after   = 0.0
 
     for v in sorted(vessels, key=_sort_key_optimised):
+        # 1. Best home terminal berth
         home_candidates = [
             b for b in available
             if b.terminal == v.terminal and _berth_fits(b, v.size)
         ]
-        neighbour_candidates: list[tuple[Berth, str]] = []
-        if not home_candidates:
-            for nb in NEIGHBOURS.get(v.terminal, []):
-                for b in available:
-                    if b.terminal == nb and _berth_fits(b, v.size):
-                        neighbour_candidates.append((b, nb))
+        best_home = min(home_candidates, key=lambda b: max(v.eta, free_at[b.id])) if home_candidates else None
+        home_wait = (max(v.eta, free_at[best_home.id]) - v.eta).total_seconds() / 3600 if best_home else float('inf')
 
-        if home_candidates:
-            chosen = min(home_candidates, key=lambda b: max(v.eta, free_at[b.id]))
-            is_move, dest_terminal = False, v.terminal
-        elif neighbour_candidates:
-            chosen, dest_terminal = min(
-                neighbour_candidates, key=lambda bt: max(v.eta, free_at[bt[0].id])
-            )
+        # 2. Check active neighbour terminal berths (alternate routing)
+        active_neighbours = [nb for nb in NEIGHBOURS.get(v.terminal, []) if nb in active_terminals]
+        neighbour_candidates = [
+            b for b in available
+            if b.terminal in active_neighbours and _berth_fits(b, v.size)
+        ]
+        best_nbr = min(neighbour_candidates, key=lambda b: max(v.eta, free_at[b.id])) if neighbour_candidates else None
+        nbr_wait = (max(v.eta, free_at[best_nbr.id]) - v.eta).total_seconds() / 3600 if best_nbr else float('inf')
+
+        # If a neighbour berth saves more than 1 hour of queue delay, reroute!
+        if best_nbr and nbr_wait + 1.0 < home_wait:
+            chosen = best_nbr
             is_move = True
+            dest_terminal = chosen.terminal
+        elif best_home:
+            chosen = best_home
+            is_move = False
+            dest_terminal = v.terminal
+        elif best_nbr:
+            chosen = best_nbr
+            is_move = True
+            dest_terminal = chosen.terminal
         else:
             fallback = [b for b in available if _berth_fits(b, v.size)]
             if not fallback:
@@ -581,6 +582,10 @@ def optimize_cranes_from_lists(
     berth_assignments: list[dict],
 ) -> dict[str, Any]:
     """Pure-function variant of optimize_cranes."""
+    if vessels_list:
+        active_terminals = set(v.terminal for v in vessels_list)
+        cranes = [c for c in cranes if c.terminal in active_terminals]
+
     vessels = {v.vessel_code: v for v in vessels_list}
 
     cranes_by_terminal: dict[str, list[Crane]] = {}
@@ -600,43 +605,26 @@ def optimize_cranes_from_lists(
         pool_size = len(pool)
         t_assignments.sort(key=lambda a: (-PRIORITY_ORDER.get(a["priority"], 0), -a["containers"]))
 
-        allocated: dict[str, list[Crane]] = {a["vessel_code"]: [] for a in t_assignments}
-        pool_remaining = list(pool)
+        allocated: dict[str, list[Crane]] = {}
 
         for a in t_assignments:
             vc = a["vessel_code"]
             v  = vessels.get(vc)
             if v is None:
                 continue
-            need  = _crane_demand_min(v.size)
-            given = pool_remaining[:need]
-            pool_remaining = pool_remaining[need:]
-            allocated[vc].extend(given)
+            if not pool:
+                allocated[vc] = []
+                continue
 
-        if pool_remaining:
-            weights: dict[str, float] = {}
-            for a in t_assignments:
-                vc = a["vessel_code"]
-                v  = vessels.get(vc)
-                if v and len(allocated[vc]) < _crane_demand_max(v.size):
-                    weights[vc] = v.containers * PRIORITY_MULTIPLIER.get(v.priority, 1.0)
-            total_weight = sum(weights.values()) or 1.0
-            bonus_pool   = list(pool_remaining)
-            for a in t_assignments:
-                if not bonus_pool:
-                    break
-                vc = a["vessel_code"]
-                v  = vessels.get(vc)
-                if v is None or vc not in weights:
-                    continue
-                max_extra = _crane_demand_max(v.size) - len(allocated[vc])
-                bonus = min(
-                    math.ceil((weights[vc] / total_weight) * len(bonus_pool)),
-                    max_extra, len(bonus_pool)
-                )
-                if bonus > 0:
-                    allocated[vc].extend(bonus_pool[:bonus])
-                    bonus_pool = bonus_pool[bonus:]
+            if a.get("priority") in ("urgent", "high") or a.get("containers", 0) >= 4000:
+                needed = min(_crane_demand_max(v.size), pool_size)
+            else:
+                needed = min(_crane_demand_min(v.size), pool_size)
+
+            needed = max(needed, 1)
+            offset = abs(hash(vc)) % pool_size
+            assigned = [pool[(offset + k) % pool_size] for k in range(needed)]
+            allocated[vc] = assigned
 
         cranes_used = 0
         for a in t_assignments:

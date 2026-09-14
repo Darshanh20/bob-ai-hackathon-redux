@@ -12,11 +12,13 @@ GET  /ports/{port_id}/copilot/explain/{t}  – AI explanation for a terminal's r
 """
 
 import io
+import os
 from datetime import datetime
 from typing import Any
 
 import pandas as pd
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -114,15 +116,27 @@ def get_port(port_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
     except Exception:
         occupied = set()
 
+    # Fetch active terminals directly from the vessel schedule data
+    vessels = db.query(Vessel).filter(Vessel.port_id == port_id).all()
+    active_terminals = set(v.terminal for v in vessels) if vessels else None
+
+    berth_records = port.berth_records
+    crane_records = port.crane_records
+    if active_terminals:
+        berth_records = [b for b in berth_records if b.terminal in active_terminals]
+        crane_records = [c for c in crane_records if c.terminal in active_terminals]
+
+    num_terminals = len(active_terminals) if active_terminals else port.terminals
+
     return {
         "id":            port.id,
         "name":          port.name,
-        "terminals":     port.terminals,
-        "berths":        port.berths,
-        "cranes":        port.cranes,
+        "terminals":     num_terminals,
+        "berths":        len(berth_records),
+        "cranes":        len(crane_records),
         "yard_capacity": port.yard_capacity,
-        "berth_records": [_berth_to_dict(b, occupied) for b in port.berth_records],
-        "crane_records": [_crane_to_dict(c) for c in port.crane_records],
+        "berth_records": [_berth_to_dict(b, occupied) for b in berth_records],
+        "crane_records": [_crane_to_dict(c) for c in crane_records],
     }
 
 
@@ -232,6 +246,36 @@ async def upload_vessels(
         "priority_breakdown": df["Priority"].str.lower().value_counts().to_dict(),
         "size_breakdown":     df["Size"].str.lower().value_counts().to_dict(),
     }
+
+
+# ── 2b. DELETE /ports/{port_id}/vessels ───────────────────────────────────────
+
+@router.delete("/{port_id}/vessels")
+def clear_vessels(port_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    port = _port_or_404(port_id, db)
+    deleted_count = db.query(Vessel).filter(Vessel.port_id == port_id).delete()
+    db.commit()
+    return {
+        "message": f"Successfully deleted {deleted_count} vessels from {port.name}",
+        "port_id": port_id,
+        "deleted_count": deleted_count,
+    }
+
+
+# ── 2c. GET /ports/{port_id}/sample-csv ───────────────────────────────────────
+
+@router.get("/{port_id}/sample-csv")
+def get_sample_csv(port_id: int):
+    sample_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "data", "sample_vessel_schedule.csv")
+    )
+    if not os.path.exists(sample_path):
+        raise HTTPException(status_code=404, detail="Sample CSV not found")
+    return FileResponse(
+        sample_path,
+        media_type="text/csv",
+        filename="sample_vessel_schedule.csv",
+    )
 
 
 # ── 3. GET /ports/{port_id}/vessels ───────────────────────────────────────────

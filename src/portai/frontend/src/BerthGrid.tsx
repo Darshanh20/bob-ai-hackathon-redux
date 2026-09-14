@@ -20,12 +20,22 @@ export default function BerthGrid({ berths }: Props) {
     (byTerminal[b.terminal] ??= []).push(b);
   }
 
+  const numTerminals = Object.keys(byTerminal).length;
+  const gridColsClass =
+    numTerminals <= 1
+      ? "grid-cols-1"
+      : numTerminals === 2
+      ? "grid-cols-1 sm:grid-cols-2"
+      : numTerminals === 3
+      ? "grid-cols-1 sm:grid-cols-3"
+      : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-4";
+
   return (
     <div className="space-y-3">
       <h2 className="text-xs font-semibold tracking-widest text-slate-400 uppercase">
         Berth Status
       </h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className={`grid ${gridColsClass} gap-3`}>
         {Object.entries(byTerminal)
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([terminal, tbBerths]) => (

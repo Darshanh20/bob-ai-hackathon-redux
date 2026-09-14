@@ -232,6 +232,12 @@ def calculate_congestion_from_lists(
     """
     now = _effective_now(vessels)
 
+    # Only include berths/cranes from terminals actually active in the vessel data
+    if vessels:
+        active_terminals = set(v.terminal for v in vessels)
+        berths = [b for b in berths if b.terminal in active_terminals]
+        cranes = [c for c in cranes if c.terminal in active_terminals]
+
     peak_metrics: dict[str, Any] = {}
     peak_score = -1.0
     for step in range(0, 72, 4):
@@ -297,6 +303,12 @@ def calculate_congestion(port_id: int, db: Session) -> dict[str, Any]:
     berths  = db.query(Berth).filter(Berth.port_id == port_id).all()
     cranes  = db.query(Crane).filter(Crane.port_id == port_id).all()
     vessels = db.query(Vessel).filter(Vessel.port_id == port_id).all()
+
+    # Only evaluate berths/cranes from terminals actually active in the vessel data
+    if vessels:
+        active_terminals = set(v.terminal for v in vessels)
+        berths = [b for b in berths if b.terminal in active_terminals]
+        cranes = [c for c in cranes if c.terminal in active_terminals]
 
     now = _effective_now(vessels)
 

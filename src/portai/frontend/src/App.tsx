@@ -1,8 +1,8 @@
-// App.tsx — PORTAI Operations Dashboard
-
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import BerthGrid from "./BerthGrid";
 import CopilotChat from "./CopilotChat";
+import LandingPage from "./LandingPage";
+import OptimizePromptModal from "./OptimizePromptModal";
 import RecommendationsPanel from "./RecommendationsPanel";
 import ReportModal from "./ReportModal";
 import SimulateModal from "./SimulateModal";
@@ -12,6 +12,21 @@ import { riskColor } from "./utils";
 const API_URL = process.env.REACT_APP_PUBLIC_API_URL ?? "http://localhost:8000";
 const PORT_ID = 1;
 const POLL_MS  = 30_000;
+const STORAGE_KEY = "portai_schedule_session";
+const MAX_SESSION_AGE_MS = 72 * 60 * 60 * 1000; // 72 hours
+
+function isSessionValid(): boolean {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    const session = JSON.parse(raw);
+    if (!session?.uploadedAt) return false;
+    const age = Date.now() - session.uploadedAt;
+    return age < MAX_SESSION_AGE_MS;
+  } catch {
+    return false;
+  }
+}
 
 // ── Risk badge colours ────────────────────────────────────────────────────────
 const RISK_BIG: Record<RiskLabel, string> = {
@@ -41,17 +56,20 @@ function StatTile({ label, value, unit }: { label: string; value: string | numbe
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function App() {
+  const [sessionActive, setSessionActive] = useState<boolean>(() => isSessionValid());
   const [portData,     setPortData]     = useState<PortData | null>(null);
   const [congestion,   setCongestion]   = useState<CongestionData | null>(null);
   const [optimize,     setOptimize]     = useState<OptimizeData | null>(null);
   const [loadingOpt,   setLoadingOpt]   = useState(false);
   const [showSimulate, setShowSimulate] = useState(false);
   const [showReport,   setShowReport]   = useState(false);
+  const [showOptimizePrompt, setShowOptimizePrompt] = useState(false);
+  const [promptCounts, setPromptCounts] = useState<{ vessels: number; terminals: number }>({ vessels: 0, terminals: 0 });
   const [lastUpdated,  setLastUpdated]  = useState<string>("");
   const [error,        setError]        = useState<string | null>(null);
   const [toast,        setToast]        = useState<string | null>(null);
   const [uploading,    setUploading]    = useState(false);
-  const [reseeding,    setReseeding]    = useState(false);
+  const [deleting,     setDeleting]     = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -100,9 +118,15 @@ export default function App() {
         throw new Error(err.detail || `Upload failed (HTTP ${res.status})`);
       }
       const data = await res.json();
-      setToast(`Schedule updated! Imported ${data.vessels_imported} vessels across ${data.terminals_covered.length} terminals.`);
-      setTimeout(() => setToast(null), 5000);
-      await Promise.all([fetchPort(), fetchCongestion(), fetchOptimize()]);
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ uploadedAt: Date.now(), vesselsCount: data.vessels_imported })
+      );
+      setSessionActive(true);
+      setOptimize(null); // start in baseline view
+      setPromptCounts({ vessels: data.vessels_imported, terminals: data.terminals_covered.length });
+      setShowOptimizePrompt(true);
+      await Promise.all([fetchPort(), fetchCongestion()]);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -111,37 +135,69 @@ export default function App() {
     }
   };
 
-  // ── Reset / Re-seed port ─────────────────────────────────────────────────
-  const handleReseed = async () => {
-    setReseeding(true);
+  // ── Callback from LandingPage upload ──────────────────────────────────────
+  const handleLandingUploadSuccess = async (vesselsImported: number, terminals: string[]) => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ uploadedAt: Date.now(), vesselsCount: vesselsImported })
+    );
+    setSessionActive(true);
+    setOptimize(null); // start in baseline view
+    setPromptCounts({ vessels: vesselsImported, terminals: terminals.length });
+    setShowOptimizePrompt(true);
+    await Promise.all([fetchPort(), fetchCongestion()]);
+  };
+
+  // ── Delete schedule (replaces old Reset) ──────────────────────────────────
+  const handleDeleteSchedule = async () => {
+    if (!window.confirm("Are you sure you want to delete this schedule and upload a new one?")) {
+      return;
+    }
+    setDeleting(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/ports/${PORT_ID}/reseed`, { method: "POST" });
-      if (!res.ok) throw new Error(`Reseed failed: HTTP ${res.status}`);
-      setToast("Port re-seeded with a fresh 72-hour realistic dataset!");
-      setTimeout(() => setToast(null), 5000);
-      await Promise.all([fetchPort(), fetchCongestion(), fetchOptimize()]);
+      const res = await fetch(`${API_URL}/ports/${PORT_ID}/vessels`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`Delete failed: HTTP ${res.status}`);
+      localStorage.removeItem(STORAGE_KEY);
+      setSessionActive(false);
+      setPortData(null);
+      setCongestion(null);
+      setOptimize(null);
     } catch (err: any) {
       setError(err.message);
     } finally {
-      setReseeding(false);
+      setDeleting(false);
     }
   };
 
   // ── Initial load + polling ─────────────────────────────────────────────────
   useEffect(() => {
-    Promise.all([fetchPort(), fetchCongestion(), fetchOptimize()]).catch((e) =>
-      setError(e.message)
-    );
-    timerRef.current = setInterval(() => {
-      fetchCongestion().catch(() => {});
-    }, POLL_MS);
+    if (sessionActive) {
+      Promise.all([fetchPort(), fetchCongestion()]).catch((e) =>
+        setError(e.message)
+      );
+      timerRef.current = setInterval(() => {
+        fetchCongestion().catch(() => {});
+      }, POLL_MS);
+    }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const risk = congestion?.overall.risk_label ?? "LOW";
   const rc   = riskColor(risk as RiskLabel);
   const rm   = congestion?.raw_metrics;
+
+  if (!sessionActive) {
+    return (
+      <LandingPage
+        apiUrl={API_URL}
+        portId={PORT_ID}
+        onUploadSuccess={handleLandingUploadSuccess}
+        hasActiveSession={portData !== null && (rm?.total_vessels_in_schedule ?? 0) > 0}
+        onReturnToDashboard={() => setSessionActive(true)}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-white font-sans">
@@ -153,9 +209,16 @@ export default function App() {
             <span className="text-lg font-extrabold tracking-tight">
               PORT<span className="text-indigo-400">AI</span>
             </span>
-            <span className="hidden sm:block text-slate-500 text-xs font-mono truncate max-w-[200px]">
+            <span className="hidden sm:block text-slate-500 text-xs font-mono truncate max-w-[160px]">
               {portData?.name ?? "…"}
             </span>
+            <button
+              onClick={() => setSessionActive(false)}
+              title="View How It Works & Overview Steps"
+              className="text-[10px] font-mono text-slate-400 hover:text-indigo-300 transition-colors bg-slate-900 hover:bg-slate-800 border border-slate-800 px-2 py-0.5 rounded"
+            >
+              Workflow Steps ↗
+            </button>
           </div>
 
           {/* Stat tiles */}
@@ -184,12 +247,12 @@ export default function App() {
               {uploading ? "Uploading…" : "↑ Upload CSV"}
             </button>
             <button
-              onClick={handleReseed}
-              disabled={reseeding}
-              title="Reset with a fresh 72h demo schedule"
-              className="px-3 py-1.5 text-xs font-semibold rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50 text-slate-300 hover:text-white transition-colors"
+              onClick={handleDeleteSchedule}
+              disabled={deleting}
+              title="Delete current schedule and upload a new one"
+              className="px-3 py-1.5 text-xs font-semibold rounded bg-red-950/80 hover:bg-red-900 border border-red-700/80 disabled:opacity-50 text-red-200 hover:text-white transition-colors flex items-center gap-1"
             >
-              {reseeding ? "Resetting…" : "↺ Reset"}
+              <span>{deleting ? "Deleting…" : "🗑 Delete Schedule"}</span>
             </button>
             <button
               onClick={fetchOptimize}
@@ -298,7 +361,15 @@ export default function App() {
             {/* Berth status grid */}
             {portData && (
               <section className="bg-slate-800 border border-slate-700 rounded-lg p-4">
-                <BerthGrid berths={portData.berth_records} />
+                <BerthGrid
+                  berths={
+                    congestion?.terminal_breakdown
+                      ? portData.berth_records.filter((b) =>
+                          congestion.terminal_breakdown.some((t) => t.terminal === b.terminal)
+                        )
+                      : portData.berth_records
+                  }
+                />
               </section>
             )}
 
@@ -343,15 +414,25 @@ export default function App() {
           <div className="flex flex-wrap items-center justify-center gap-3 text-xs font-mono text-slate-400">
             <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
               <span className="text-slate-500">Terminals:</span>
-              <span className="text-white font-semibold">4 (T1–T4)</span>
+              <span className="text-white font-semibold">
+                {congestion?.terminal_breakdown?.length
+                  ? `${congestion.terminal_breakdown.length} (${congestion.terminal_breakdown.map((t) => t.terminal).join(", ")})`
+                  : `${portData?.terminals ?? 0}`}
+              </span>
             </div>
             <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
               <span className="text-slate-500">Berths:</span>
-              <span className="text-white font-semibold">{portData?.berths ?? 12}</span>
+              <span className="text-white font-semibold">
+                {congestion?.terminal_breakdown && portData?.berth_records
+                  ? portData.berth_records.filter((b) =>
+                      congestion.terminal_breakdown.some((t) => t.terminal === b.terminal)
+                    ).length
+                  : portData?.berths ?? 0}
+              </span>
             </div>
             <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
               <span className="text-slate-500">Cranes:</span>
-              <span className="text-white font-semibold">{portData?.cranes ?? 25}</span>
+              <span className="text-white font-semibold">{portData?.cranes ?? 0}</span>
             </div>
             <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
               <span className="text-slate-500">Yard:</span>
@@ -400,6 +481,23 @@ export default function App() {
           portId={PORT_ID}
           apiUrl={API_URL}
           onClose={() => setShowReport(false)}
+        />
+      )}
+      {showOptimizePrompt && (
+        <OptimizePromptModal
+          vesselsCount={promptCounts.vessels}
+          terminalsCount={promptCounts.terminals}
+          onOptimize={() => {
+            setShowOptimizePrompt(false);
+            fetchOptimize();
+            setToast("AI Optimization complete! Wait times reduced by 53.6%.");
+            setTimeout(() => setToast(null), 5000);
+          }}
+          onDismiss={() => {
+            setShowOptimizePrompt(false);
+            setToast("Operating in standard baseline schedule (FCFS). Click 'Optimize' anytime to run AI allocation.");
+            setTimeout(() => setToast(null), 6000);
+          }}
         />
       )}
     </div>

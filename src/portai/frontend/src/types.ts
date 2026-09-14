@@ -100,12 +100,24 @@ export interface OptimizeData {
       berth_code: string;
       home_terminal: string;
       dest_terminal: string;
+      scheduled_start: string;
       wait_hours: number;
+      service_hours: number;
       is_terminal_move: boolean;
+      eta?: string;
     }>;
     recommended_moves: OptimizeMove[];
   };
   crane_plan: {
+    assignments?: Array<{
+      vessel_code: string;
+      terminal: string;
+      priority: string;
+      containers: number;
+      cranes_assigned: number;
+      crane_codes: string[];
+      est_throughput_teu_per_h?: number;
+    }>;
     terminal_summaries: Array<{
       terminal: string;
       available_cranes: number;

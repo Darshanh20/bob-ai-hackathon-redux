@@ -56,6 +56,12 @@ def run_simulation(
     cranes  = db.query(Crane).filter(Crane.port_id == port_id).all()
     vessels = db.query(Vessel).filter(Vessel.port_id == port_id).all()
 
+    # Filter to only active terminals in the data
+    if vessels:
+        active_terminals = set(v.terminal for v in vessels)
+        berths = [b for b in berths if b.terminal in active_terminals]
+        cranes = [c for c in cranes if c.terminal in active_terminals]
+
     # ── validate target ───────────────────────────────────────────────────────
     if sim_type == "berth_unavailable":
         target = next((b for b in berths if b.id == target_id), None)
