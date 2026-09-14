@@ -49,7 +49,11 @@ export default function App() {
   const [showReport,   setShowReport]   = useState(false);
   const [lastUpdated,  setLastUpdated]  = useState<string>("");
   const [error,        setError]        = useState<string | null>(null);
+  const [toast,        setToast]        = useState<string | null>(null);
+  const [uploading,    setUploading]    = useState(false);
+  const [reseeding,    setReseeding]    = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Fetch helpers ─────────────────────────────────────────────────────────
   const fetchPort = useCallback(async () => {
@@ -77,6 +81,52 @@ export default function App() {
       setLoadingOpt(false);
     }
   }, []);
+
+  // ── Upload Schedule CSV ───────────────────────────────────────────────────
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await fetch(`${API_URL}/ports/${PORT_ID}/vessels/upload`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Upload failed (HTTP ${res.status})`);
+      }
+      const data = await res.json();
+      setToast(`Schedule updated! Imported ${data.vessels_imported} vessels across ${data.terminals_covered.length} terminals.`);
+      setTimeout(() => setToast(null), 5000);
+      await Promise.all([fetchPort(), fetchCongestion(), fetchOptimize()]);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // ── Reset / Re-seed port ─────────────────────────────────────────────────
+  const handleReseed = async () => {
+    setReseeding(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/ports/${PORT_ID}/reseed`, { method: "POST" });
+      if (!res.ok) throw new Error(`Reseed failed: HTTP ${res.status}`);
+      setToast("Port re-seeded with a fresh 72-hour realistic dataset!");
+      setTimeout(() => setToast(null), 5000);
+      await Promise.all([fetchPort(), fetchCongestion(), fetchOptimize()]);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setReseeding(false);
+    }
+  };
 
   // ── Initial load + polling ─────────────────────────────────────────────────
   useEffect(() => {
@@ -117,7 +167,30 @@ export default function App() {
           </div>
 
           {/* Action buttons */}
-          <div className="flex gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              accept=".csv"
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              title="Upload vessel schedule CSV"
+              className="px-3 py-1.5 text-xs font-semibold rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white transition-colors"
+            >
+              {uploading ? "Uploading…" : "↑ Upload CSV"}
+            </button>
+            <button
+              onClick={handleReseed}
+              disabled={reseeding}
+              title="Reset with a fresh 72h demo schedule"
+              className="px-3 py-1.5 text-xs font-semibold rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50 text-slate-300 hover:text-white transition-colors"
+            >
+              {reseeding ? "Resetting…" : "↺ Reset"}
+            </button>
             <button
               onClick={fetchOptimize}
               disabled={loadingOpt}
@@ -143,6 +216,13 @@ export default function App() {
 
       {/* ── Main content ─────────────────────────────────────────────────────── */}
       <main className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-5 space-y-5">
+
+        {toast && (
+          <div className="bg-emerald-900/40 border border-emerald-600 rounded-lg px-4 py-2.5 text-xs text-emerald-200 flex justify-between items-center shadow-lg animate-fadeIn">
+            <span>✓ {toast}</span>
+            <button onClick={() => setToast(null)} className="ml-4 text-emerald-400 hover:text-white">✕</button>
+          </div>
+        )}
 
         {error && (
           <div className="bg-red-900/30 border border-red-700 rounded-lg px-4 py-2 text-xs text-red-300 flex justify-between items-center">
@@ -236,6 +316,74 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      {/* ── Footer ─────────────────────────────────────────────────────────── */}
+      <footer className="mt-12 border-t border-slate-800/80 bg-slate-950/80 backdrop-blur-sm text-slate-400 py-8 px-4 sm:px-6">
+        <div className="max-w-screen-2xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
+          {/* Brand & Mission */}
+          <div className="space-y-1 text-center md:text-left">
+            <div className="flex items-center justify-center md:justify-start gap-2">
+              <span className="text-base font-extrabold tracking-tight text-white">
+                PORT<span className="text-indigo-400">AI</span>
+              </span>
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-800 font-mono">
+                v0.1.0
+              </span>
+              <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live Engine Active
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 max-w-md">
+              AI-driven Container Congestion Predictor, Berth & Crane Optimizer, and 72-Hour Shift Operations Planner.
+            </p>
+          </div>
+
+          {/* Quick Specifications */}
+          <div className="flex flex-wrap items-center justify-center gap-3 text-xs font-mono text-slate-400">
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
+              <span className="text-slate-500">Terminals:</span>
+              <span className="text-white font-semibold">4 (T1–T4)</span>
+            </div>
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
+              <span className="text-slate-500">Berths:</span>
+              <span className="text-white font-semibold">{portData?.berths ?? 12}</span>
+            </div>
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
+              <span className="text-slate-500">Cranes:</span>
+              <span className="text-white font-semibold">{portData?.cranes ?? 25}</span>
+            </div>
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
+              <span className="text-slate-500">Yard:</span>
+              <span className="text-white font-semibold">50,000 TEU</span>
+            </div>
+          </div>
+
+          {/* Attribution & Links */}
+          <div className="flex flex-col items-center md:items-end gap-1.5 text-xs text-slate-500">
+            <div className="flex items-center gap-3">
+              <a
+                href={`${API_URL}/docs`}
+                target="_blank"
+                rel="noreferrer"
+                className="hover:text-indigo-400 transition-colors underline decoration-slate-700 underline-offset-4"
+              >
+                API Swagger Docs
+              </a>
+              <span>·</span>
+              <button
+                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                className="hover:text-slate-300 transition-colors"
+              >
+                Back to Top ↑
+              </button>
+            </div>
+            <span className="text-[11px] font-mono text-slate-600">
+              Built for Bob AI Hackathon · Empowering Port Supervisors
+            </span>
+          </div>
+        </div>
+      </footer>
 
       {/* ── Modals ──────────────────────────────────────────────────────────── */}
       {showSimulate && portData && (

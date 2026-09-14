@@ -17,13 +17,19 @@ export default function ReportModal({ portId, apiUrl, onClose }: Props) {
 
   React.useEffect(() => {
     fetch(`${apiUrl}/ports/${portId}/report`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(d.detail || `HTTP Error ${r.status}`);
+        }
+        return r.json();
+      })
       .then(setReport)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [apiUrl, portId]);
 
-  const rc = report ? riskColor(report.overall_risk) : null;
+  const rc = report?.overall_risk ? riskColor(report.overall_risk) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">

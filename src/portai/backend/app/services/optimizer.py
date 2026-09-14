@@ -100,9 +100,14 @@ def _service_hours(vessel: Vessel, num_cranes: int) -> float:
     return vessel.containers / (TEU_PER_CRANE_HOUR * cranes)
 
 
+def _window_bucket(dt: datetime, hours: int = 4) -> int:
+    """Bucket timestamps into discrete windows so priority sorting takes effect during contention."""
+    return int(dt.timestamp() // (hours * 3600))
+
+
 def _sort_key_optimised(v: Vessel):
-    """Urgent first, then earliest ETA, then largest vessel."""
-    return (-PRIORITY_ORDER[v.priority], v.eta, -v.containers)
+    """Urgent first, then earliest ETA, then largest vessel within arrival window."""
+    return (_window_bucket(v.eta, 4), -PRIORITY_ORDER[v.priority], v.eta, -v.containers)
 
 
 def _sort_key_fcfs(v: Vessel):
@@ -231,7 +236,7 @@ def optimize_berths(port_id: int, db: Session) -> dict[str, Any]:
     conflicts_resolved = 0
     total_wait_after = 0.0
 
-    for v in sorted(vessels, key=lambda v: (v.eta, -PRIORITY_ORDER[v.priority], -v.containers)):
+    for v in sorted(vessels, key=_sort_key_optimised):
         # 1. Try home terminal berths
         home_candidates = [
             b for b in available
@@ -498,7 +503,7 @@ def optimize_berths_from_lists(
     conflicts_resolved = 0
     total_wait_after   = 0.0
 
-    for v in sorted(vessels, key=lambda v: (v.eta, -PRIORITY_ORDER[v.priority], -v.containers)):
+    for v in sorted(vessels, key=_sort_key_optimised):
         home_candidates = [
             b for b in available
             if b.terminal == v.terminal and _berth_fits(b, v.size)

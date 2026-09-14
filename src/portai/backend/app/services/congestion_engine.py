@@ -205,6 +205,18 @@ def _forecast(
     return result
 
 
+def _effective_now(vessels: list[Vessel]) -> datetime:
+    """Return effective current time. If schedule is outside window, anchor to schedule start."""
+    current = datetime.utcnow()
+    if not vessels:
+        return current
+    min_eta = min(v.eta for v in vessels)
+    max_eta = max(v.eta for v in vessels)
+    if current > max_eta or current < min_eta - timedelta(hours=24):
+        return min_eta
+    return current
+
+
 # ── list-based entry point (used by simulator — no DB writes) ────────────────
 
 def calculate_congestion_from_lists(
@@ -218,7 +230,7 @@ def calculate_congestion_from_lists(
     from the DB. Used by the scenario simulator so asset status can be
     modified in-memory without persisting to the DB.
     """
-    now = datetime.utcnow()
+    now = _effective_now(vessels)
 
     peak_metrics: dict[str, Any] = {}
     peak_score = -1.0
@@ -286,7 +298,7 @@ def calculate_congestion(port_id: int, db: Session) -> dict[str, Any]:
     cranes  = db.query(Crane).filter(Crane.port_id == port_id).all()
     vessels = db.query(Vessel).filter(Vessel.port_id == port_id).all()
 
-    now = datetime.utcnow()
+    now = _effective_now(vessels)
 
     # ── find peak 8-hour window (slide in 4-hour steps across 72 h) ──────────
     peak_metrics: dict[str, Any] = {}

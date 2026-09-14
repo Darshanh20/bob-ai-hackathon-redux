@@ -49,13 +49,16 @@ def _port_or_404(port_id: int, db: Session) -> Port:
     return port
 
 
-def _berth_to_dict(b: Berth) -> dict:
+def _berth_to_dict(b: Berth, occupied_codes: set[str] | None = None) -> dict:
+    status = b.status
+    if status == "available" and occupied_codes and b.berth_code in occupied_codes:
+        status = "occupied"
     return {
         "id":              b.id,
         "berth_code":      b.berth_code,
         "terminal":        b.terminal,
         "max_vessel_size": b.max_vessel_size,
-        "status":          b.status,
+        "status":          status,
         "capacity_teu":    b.capacity_teu,
     }
 
@@ -90,6 +93,27 @@ def _vessel_to_dict(v: Vessel) -> dict:
 @router.get("/{port_id}")
 def get_port(port_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
     port = _port_or_404(port_id, db)
+    occupied: set[str] = set()
+    try:
+        berth_plan = optimize_berths(port_id, db)
+        assignments = berth_plan.get("assignments", [])
+        if assignments:
+            now_dt = datetime.utcnow()
+            for a in assignments:
+                start = datetime.fromisoformat(a["scheduled_start"])
+                end = start + pd.Timedelta(hours=a.get("service_hours", 4)).to_pytimedelta()
+                if start <= now_dt < end:
+                    occupied.add(a["berth_code"])
+            # If current real clock is outside window, display first active wave
+            if not occupied:
+                earliest = min(datetime.fromisoformat(a["scheduled_start"]) for a in assignments)
+                for a in assignments:
+                    start = datetime.fromisoformat(a["scheduled_start"])
+                    if start <= earliest + pd.Timedelta(hours=4).to_pytimedelta():
+                        occupied.add(a["berth_code"])
+    except Exception:
+        occupied = set()
+
     return {
         "id":            port.id,
         "name":          port.name,
@@ -97,9 +121,19 @@ def get_port(port_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
         "berths":        port.berths,
         "cranes":        port.cranes,
         "yard_capacity": port.yard_capacity,
-        "berth_records": [_berth_to_dict(b) for b in port.berth_records],
+        "berth_records": [_berth_to_dict(b, occupied) for b in port.berth_records],
         "crane_records": [_crane_to_dict(c) for c in port.crane_records],
     }
+
+
+# ── 1b. POST /ports/{port_id}/reseed ─────────────────────────────────────────
+
+@router.post("/{port_id}/reseed")
+def reseed_port(port_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    _port_or_404(port_id, db)
+    from ..services.seed_data import seed
+    seed()
+    return {"message": "Port database re-seeded successfully with fresh 72h schedule", "port_id": port_id}
 
 
 # ── 2. POST /ports/{port_id}/vessels/upload ───────────────────────────────────
