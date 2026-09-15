@@ -2,6 +2,8 @@
 
 export type RiskLabel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
+export type NavPage = "overview" | "vessels" | "terminals" | "dispatch" | "simulation" | "reports";
+
 export interface ForecastWindow {
   window: string;
   window_start: string;
@@ -59,6 +61,19 @@ export interface CraneRecord {
   terminal: string;
   capacity_moves_per_hour: number;
   status: "available" | "maintenance" | "occupied";
+}
+
+export interface VesselRecord {
+  id: number;
+  vessel_code: string;
+  eta: string;
+  etd: string;
+  containers: number;
+  size: "small" | "medium" | "large" | string;
+  priority: "normal" | "high" | "urgent" | string;
+  terminal: string;
+  assigned_berth_id?: number | null;
+  assigned_cranes?: string[];
 }
 
 export interface PortData {

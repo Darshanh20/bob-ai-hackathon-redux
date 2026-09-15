@@ -1,17 +1,21 @@
+// App.tsx — Maritime Command Center with Collapsible Side Navigation Slider & Modular Pages
+
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import BerthGrid from "./BerthGrid";
 import CopilotChat from "./CopilotChat";
+import DispatchPage from "./DispatchPage";
 import LandingPage from "./LandingPage";
 import OptimizePromptModal from "./OptimizePromptModal";
-import RecommendationsPanel from "./RecommendationsPanel";
-import ReportModal from "./ReportModal";
-import SimulateModal from "./SimulateModal";
-import { CongestionData, OptimizeData, PortData, RiskLabel } from "./types";
-import { riskColor } from "./utils";
+import OverviewPage from "./OverviewPage";
+import ReportsPage from "./ReportsPage";
+import SidebarNav from "./SidebarNav";
+import SimulationPage from "./SimulationPage";
+import TerminalsPage from "./TerminalsPage";
+import VesselsPage from "./VesselsPage";
+import { CongestionData, NavPage, OptimizeData, PortData } from "./types";
 
 const API_URL = process.env.REACT_APP_PUBLIC_API_URL ?? "http://localhost:8000";
 const PORT_ID = 1;
-const POLL_MS  = 30_000;
+const POLL_MS = 30_000;
 const STORAGE_KEY = "portai_schedule_session";
 const MAX_SESSION_AGE_MS = 72 * 60 * 60 * 1000; // 72 hours
 
@@ -28,48 +32,47 @@ function isSessionValid(): boolean {
   }
 }
 
-// ── Risk badge colours ────────────────────────────────────────────────────────
-const RISK_BIG: Record<RiskLabel, string> = {
-  LOW:      "bg-emerald-600/30 border-emerald-500 text-emerald-300",
-  MEDIUM:   "bg-yellow-600/30  border-yellow-500  text-yellow-300",
-  HIGH:     "bg-orange-600/30  border-orange-500  text-orange-300",
-  CRITICAL: "bg-red-700/30     border-red-600     text-red-300",
+const PAGE_TITLES: Record<NavPage, { title: string; subtitle: string }> = {
+  overview: { title: "Command Center", subtitle: "Real-time Operations Overview" },
+  vessels: { title: "Vessel Operations", subtitle: "AIS Fleet Live Tracking & Cargo Priority" },
+  terminals: { title: "Terminal Hub", subtitle: "Berth Matrix & STS Crane Gangs" },
+  dispatch: { title: "Dispatch Directives", subtitle: "AI CP-SAT Optimizer & Berthing Orders" },
+  simulation: { title: "What-If Simulator", subtitle: "Contingency Stress Testing & Incident Lab" },
+  reports: { title: "Audit & Reports", subtitle: "72-Hour Shift Briefings & Demurrage Analysis" },
 };
 
-// ── Forecast dot ──────────────────────────────────────────────────────────────
-function RiskDot({ label }: { label: RiskLabel }) {
-  const rc = riskColor(label);
-  return <span className={`inline-block w-2.5 h-2.5 rounded-full ${rc.dot}`} />;
-}
-
-// ── Stat tile ─────────────────────────────────────────────────────────────────
-function StatTile({ label, value, unit }: { label: string; value: string | number; unit?: string }) {
-  return (
-    <div className="bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 flex flex-col gap-1">
-      <span className="text-[10px] uppercase tracking-widest text-slate-400">{label}</span>
-      <span className="font-mono text-xl font-bold text-white leading-tight">
-        {value}<span className="text-sm text-slate-400 ml-0.5">{unit}</span>
-      </span>
-    </div>
-  );
-}
-
-// ── Main component ────────────────────────────────────────────────────────────
 export default function App() {
   const [sessionActive, setSessionActive] = useState<boolean>(() => isSessionValid());
-  const [portData,     setPortData]     = useState<PortData | null>(null);
-  const [congestion,   setCongestion]   = useState<CongestionData | null>(null);
-  const [optimize,     setOptimize]     = useState<OptimizeData | null>(null);
-  const [loadingOpt,   setLoadingOpt]   = useState(false);
-  const [showSimulate, setShowSimulate] = useState(false);
-  const [showReport,   setShowReport]   = useState(false);
+  const [currentPage, setCurrentPage] = useState<NavPage>("overview");
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
+  const [copilotOpen, setCopilotOpen] = useState<boolean>(false);
+
+  const [portData, setPortData] = useState<PortData | null>(null);
+  const [congestion, setCongestion] = useState<CongestionData | null>(null);
+  const [optimize, setOptimize] = useState<OptimizeData | null>(null);
+  const [loadingOpt, setLoadingOpt] = useState(false);
   const [showOptimizePrompt, setShowOptimizePrompt] = useState(false);
-  const [promptCounts, setPromptCounts] = useState<{ vessels: number; terminals: number }>({ vessels: 0, terminals: 0 });
-  const [lastUpdated,  setLastUpdated]  = useState<string>("");
-  const [error,        setError]        = useState<string | null>(null);
-  const [toast,        setToast]        = useState<string | null>(null);
-  const [uploading,    setUploading]    = useState(false);
-  const [deleting,     setDeleting]     = useState(false);
+  const [promptCounts, setPromptCounts] = useState<{ vessels: number; terminals: number }>({
+    vessels: 0,
+    terminals: 0,
+  });
+  const [lastUpdated, setLastUpdated] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Generic popup modal state
+  const [genericModal, setGenericModal] = useState<{
+    open: boolean;
+    title: string;
+    body: string;
+  }>({
+    open: false,
+    title: "",
+    body: "",
+  });
+
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -92,7 +95,12 @@ export default function App() {
     try {
       const res = await fetch(`${API_URL}/ports/${PORT_ID}/optimize`);
       if (!res.ok) throw new Error(`Optimize failed: ${res.status}`);
-      setOptimize(await res.json());
+      const data = await res.json();
+      setOptimize(data);
+      setToast(
+        `AI Optimization complete! Wait times reduced by ${data.summary.improvement_percent}%.`
+      );
+      setTimeout(() => setToast(null), 5000);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -123,7 +131,7 @@ export default function App() {
         JSON.stringify({ uploadedAt: Date.now(), vesselsCount: data.vessels_imported })
       );
       setSessionActive(true);
-      setOptimize(null); // start in baseline view
+      setOptimize(null);
       setPromptCounts({ vessels: data.vessels_imported, terminals: data.terminals_covered.length });
       setShowOptimizePrompt(true);
       await Promise.all([fetchPort(), fetchCongestion()]);
@@ -142,13 +150,13 @@ export default function App() {
       JSON.stringify({ uploadedAt: Date.now(), vesselsCount: vesselsImported })
     );
     setSessionActive(true);
-    setOptimize(null); // start in baseline view
+    setOptimize(null);
     setPromptCounts({ vessels: vesselsImported, terminals: terminals.length });
     setShowOptimizePrompt(true);
     await Promise.all([fetchPort(), fetchCongestion()]);
   };
 
-  // ── Delete schedule (replaces old Reset) ──────────────────────────────────
+  // ── Delete schedule ───────────────────────────────────────────────────────
   const handleDeleteSchedule = async () => {
     if (!window.confirm("Are you sure you want to delete this schedule and upload a new one?")) {
       return;
@@ -173,19 +181,37 @@ export default function App() {
   // ── Initial load + polling ─────────────────────────────────────────────────
   useEffect(() => {
     if (sessionActive) {
-      Promise.all([fetchPort(), fetchCongestion()]).catch((e) =>
-        setError(e.message)
-      );
+      Promise.all([fetchPort(), fetchCongestion()]).catch((e) => setError(e.message));
       timerRef.current = setInterval(() => {
         fetchCongestion().catch(() => {});
       }, POLL_MS);
     }
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
   }, [sessionActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const risk = congestion?.overall.risk_label ?? "LOW";
-  const rc   = riskColor(risk as RiskLabel);
-  const rm   = congestion?.raw_metrics;
+  // Keyboard shortcut listener (Cmd/Ctrl + K to toggle Copilot)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCopilotOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const rm = congestion?.raw_metrics;
+
+  const openInfoModal = (title: string, body: string) => {
+    setGenericModal({ open: true, title, body });
+  };
+
+  const closeInfoModal = () => {
+    setGenericModal({ open: false, title: "", body: "" });
+  };
 
   if (!sessionActive) {
     return (
@@ -199,38 +225,68 @@ export default function App() {
     );
   }
 
+  const pageInfo = PAGE_TITLES[currentPage];
+
   return (
-    <div className="min-h-screen bg-slate-950 text-white font-sans">
-      {/* ── Top bar ─────────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-30 bg-slate-950/95 border-b border-slate-800 backdrop-blur-sm">
-        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-4">
-          {/* Brand */}
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-lg font-extrabold tracking-tight">
-              PORT<span className="text-indigo-400">AI</span>
-            </span>
-            <span className="hidden sm:block text-slate-500 text-xs font-mono truncate max-w-[160px]">
-              {portData?.name ?? "…"}
-            </span>
+    <div className="min-h-screen bg-ocean-base text-[#D3E4EC] font-sans antialiased selection:bg-brand-cyan selection:text-ocean-base">
+      {/* ── 1. SIDE NAVIGATION SLIDER ──────────────────────────────────── */}
+      <SidebarNav
+        currentPage={currentPage}
+        onSelectPage={(page) => {
+          setCurrentPage(page);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }}
+        isOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen(!sidebarOpen)}
+        vesselCount={rm?.total_vessels_in_schedule ?? 20}
+        terminalCount={congestion?.terminal_breakdown?.length ?? 3}
+        onOpenUpload={() => fileInputRef.current?.click()}
+        onReturnToLanding={() => setSessionActive(false)}
+        portName={portData?.name ?? "ABC INTERNATIONAL PORT"}
+      />
+
+      {/* ── 2. MAIN CONTENT AREA (OFFSET BY SIDEBAR) ──────────────────── */}
+      <div
+        className={`transition-all duration-300 ease-in-out ${
+          sidebarOpen ? "lg:pl-64" : "lg:pl-20"
+        } flex flex-col min-h-screen`}
+      >
+        {/* Top Header */}
+        <header className="sticky top-0 z-30 w-full bg-ocean-base/95 backdrop-blur-md border-b border-ocean-border/80 px-4 sm:px-8 h-16 flex items-center justify-between transition-colors">
+          {/* Left: Mobile Sidebar Toggle + Page Title */}
+          <div className="flex items-center gap-3">
             <button
-              onClick={() => setSessionActive(false)}
-              title="View How It Works & Overview Steps"
-              className="text-[10px] font-mono text-slate-400 hover:text-indigo-300 transition-colors bg-slate-900 hover:bg-slate-800 border border-slate-800 px-2 py-0.5 rounded"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-2 rounded-lg bg-ocean-surface hover:bg-ocean-elevated text-[#85A1AF] hover:text-white border border-ocean-border lg:hidden transition-colors"
             >
-              Workflow Steps ↗
+              <span className="material-symbols-outlined text-xl">menu</span>
             </button>
+
+            <div className="flex items-center gap-2.5">
+              <span className="font-sono font-bold text-white text-base sm:text-lg">
+                {pageInfo.title}
+              </span>
+              <span className="hidden sm:inline text-ocean-border">/</span>
+              <span className="hidden sm:inline text-xs font-sono text-[#85A1AF]">
+                {portData?.name ?? "ABC INTERNATIONAL PORT"}
+              </span>
+            </div>
           </div>
 
-          {/* Stat tiles */}
-          <div className="flex gap-2 flex-wrap flex-1">
-            <StatTile label="Vessels"      value={rm?.total_vessels_in_schedule ?? "—"} />
-            <StatTile label="Berth Util"   value={rm ? `${rm.berth_utilization_pct}` : "—"} unit="%" />
-            <StatTile label="Crane Util"   value={rm ? `${rm.crane_utilization_pct}` : "—"} unit="%" />
-            <StatTile label="Queue"        value={rm?.queue_estimate ?? "—"} />
-          </div>
+          {/* Right: Status & Primary Actions */}
+          <div className="flex items-center gap-3">
+            {/* Live Ping Indicator */}
+            <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-full bg-ocean-surface border border-ocean-border text-xs font-sono">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-green opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-green"></span>
+              </span>
+              <span className="text-brand-green tracking-wide uppercase font-semibold text-[11px]">
+                LIVE AIS
+              </span>
+            </div>
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-2 shrink-0">
+            {/* Upload CSV hidden input & button */}
             <input
               type="file"
               ref={fileInputRef}
@@ -241,248 +297,266 @@ export default function App() {
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
-              title="Upload vessel schedule CSV"
-              className="px-3 py-1.5 text-xs font-semibold rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white transition-colors"
+              title="Upload new vessel schedule CSV"
+              className="h-9 px-3 rounded bg-ocean-elevated hover:bg-ocean-borderLight text-white font-sono text-xs font-semibold uppercase tracking-wider border border-ocean-border transition-colors hidden sm:flex items-center gap-1.5 disabled:opacity-50"
             >
-              {uploading ? "Uploading…" : "↑ Upload CSV"}
+              <span className="material-symbols-outlined text-[16px] text-brand-cyan">upload_file</span>
+              <span>{uploading ? "Uploading…" : "Upload CSV"}</span>
             </button>
+
+            {/* Delete Schedule Button */}
             <button
               onClick={handleDeleteSchedule}
               disabled={deleting}
-              title="Delete current schedule and upload a new one"
-              className="px-3 py-1.5 text-xs font-semibold rounded bg-red-950/80 hover:bg-red-900 border border-red-700/80 disabled:opacity-50 text-red-200 hover:text-white transition-colors flex items-center gap-1"
+              title="Delete current schedule"
+              className="h-9 px-2.5 sm:px-3 rounded bg-brand-red/10 hover:bg-brand-red/20 text-brand-red font-sono text-xs font-semibold uppercase tracking-wider border border-brand-red/30 transition-colors flex items-center gap-1"
             >
-              <span>{deleting ? "Deleting…" : "🗑 Delete Schedule"}</span>
+              <span className="material-symbols-outlined text-[16px]">delete</span>
+              <span className="hidden md:inline">{deleting ? "Deleting…" : "Delete"}</span>
             </button>
+
+            {/* Run Optimizer Trigger */}
             <button
               onClick={fetchOptimize}
               disabled={loadingOpt}
-              className="px-3 py-1.5 text-xs font-semibold rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white transition-colors"
+              className="h-9 px-3.5 sm:px-4 rounded-md bg-brand-cyan hover:bg-brand-cyanHover text-ocean-base font-sono text-xs font-bold tracking-wider uppercase shadow-[0_0_16px_rgba(40,215,209,0.25)] flex items-center gap-1.5 transition-all disabled:opacity-50"
             >
-              {loadingOpt ? "…" : "Optimize"}
+              <span className="material-symbols-outlined text-[16px]">bolt</span>
+              <span>{loadingOpt ? "Optimizing…" : "Run Optimizer"}</span>
             </button>
+
+            {/* Copilot Toggle Trigger */}
             <button
-              onClick={() => setShowSimulate(true)}
-              className="px-3 py-1.5 text-xs font-semibold rounded bg-orange-600 hover:bg-orange-500 text-white transition-colors"
+              onClick={() => setCopilotOpen(!copilotOpen)}
+              title="Toggle AI Copilot"
+              className={`h-9 px-2.5 rounded-lg border font-sono text-xs flex items-center gap-1.5 transition-all ${
+                copilotOpen
+                  ? "bg-brand-cyan text-ocean-base border-brand-cyan shadow-[0_0_12px_rgba(40,215,209,0.3)] font-bold"
+                  : "bg-ocean-surface hover:bg-ocean-elevated text-brand-cyan border-brand-cyan/40"
+              }`}
             >
-              Simulate
+              <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+              <span className="hidden xl:inline">Copilot</span>
             </button>
-            <button
-              onClick={() => setShowReport(true)}
-              className="px-3 py-1.5 text-xs font-semibold rounded bg-slate-700 hover:bg-slate-600 text-white transition-colors"
-            >
-              Report
-            </button>
+          </div>
+        </header>
+
+        {/* Quiet Sub-bar */}
+        <div className="w-full bg-ocean-base border-b border-ocean-border/50 px-4 sm:px-8 py-2 flex items-center justify-between text-xs text-[#85A1AF]">
+          <div className="flex items-center gap-2">
+            <span className="font-sono text-[11px] uppercase text-white font-medium">
+              {pageInfo.subtitle}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 font-sono text-[11px]">
+            <span className="text-[#678494] hidden sm:inline">
+              {lastUpdated ? `Telemetry synced ${lastUpdated}` : "Polling 30s"}
+            </span>
+            <span className="text-brand-green">● Solver Online</span>
           </div>
         </div>
-      </header>
 
-      {/* ── Main content ─────────────────────────────────────────────────────── */}
-      <main className="max-w-screen-2xl mx-auto px-4 sm:px-6 py-5 space-y-5">
-
-        {toast && (
-          <div className="bg-emerald-900/40 border border-emerald-600 rounded-lg px-4 py-2.5 text-xs text-emerald-200 flex justify-between items-center shadow-lg animate-fadeIn">
-            <span>✓ {toast}</span>
-            <button onClick={() => setToast(null)} className="ml-4 text-emerald-400 hover:text-white">✕</button>
-          </div>
-        )}
-
-        {error && (
-          <div className="bg-red-900/30 border border-red-700 rounded-lg px-4 py-2 text-xs text-red-300 flex justify-between items-center">
-            <span>⚠ {error}</span>
-            <button onClick={() => setError(null)} className="ml-4 text-red-400 hover:text-red-200">✕</button>
-          </div>
-        )}
-
-        {/* ── Congestion risk banner ──────────────────────────────────────── */}
-        <section className={`rounded-xl border px-5 py-4 flex flex-wrap items-center justify-between gap-4 ${RISK_BIG[risk as RiskLabel]}`}>
-          <div className="flex items-center gap-4">
-            <div className={`text-5xl font-black font-mono tracking-tight ${rc.text}`}>{risk}</div>
-            <div className="space-y-0.5">
-              <div className="text-sm font-semibold text-slate-200">
-                Congestion Score: <span className={`font-mono ${rc.text}`}>{congestion?.overall.congestion_score ?? "—"}</span>
-                <span className="text-[11px] text-slate-400 ml-2">/ 100</span>
-              </div>
-              <div className="text-[11px] text-slate-400 font-mono">
-                Peak window: {congestion?.overall.peak_window_start
-                  ? `${new Date(congestion.overall.peak_window_start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} – ${new Date(congestion.overall.peak_window_end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                  : "—"}
-              </div>
-              <div className="text-[10px] text-slate-500">Updated {lastUpdated || "…"} · polling every 30s</div>
+        {/* Main Content Area */}
+        <main className="flex-1 w-full max-w-[1600px] mx-auto px-4 sm:px-8 py-6">
+          {/* Toast Notification */}
+          {toast && (
+            <div className="mb-6 bg-brand-green/15 border border-brand-green/50 rounded-xl px-4 py-3 text-xs text-brand-green font-sono flex justify-between items-center shadow-lg animate-fadeIn">
+              <span className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">verified</span>
+                <span>{toast}</span>
+              </span>
+              <button onClick={() => setToast(null)} className="text-brand-green hover:text-white">
+                ✕
+              </button>
             </div>
-          </div>
+          )}
 
-          {/* 72-hour forecast strip */}
-          <div className="flex gap-3">
-            {(congestion?.forecast ?? []).map((w) => (
-              <div key={w.window} className="bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-center min-w-[68px]">
-                <div className="text-[10px] text-slate-400 font-bold tracking-widest mb-1">{w.window}</div>
-                <div className="flex justify-center mb-1"><RiskDot label={w.risk_label as RiskLabel} /></div>
-                <div className={`text-[11px] font-mono font-semibold ${riskColor(w.risk_label as RiskLabel).text}`}>
-                  {w.risk_label}
-                </div>
-                <div className="text-[10px] text-slate-500 mt-0.5">{w.vessel_count}v</div>
-              </div>
-            ))}
-          </div>
-        </section>
+          {/* Error Banner */}
+          {error && (
+            <div className="mb-6 bg-brand-red/20 border border-brand-red/60 rounded-xl px-4 py-3 text-xs text-brand-red font-sono flex justify-between items-center animate-fadeIn">
+              <span className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-[18px]">error</span>
+                <span>{error}</span>
+              </span>
+              <button onClick={() => setError(null)} className="text-white hover:text-brand-red">
+                ✕
+              </button>
+            </div>
+          )}
 
-        {/* ── Two-column layout: left=main content, right=copilot ─────────── */}
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-5">
-          {/* Left column */}
-          <div className="space-y-5">
-
-            {/* Terminal congestion breakdown */}
-            {congestion?.terminal_breakdown && (
-              <section className="bg-slate-800 border border-slate-700 rounded-lg p-4 space-y-3">
-                <h2 className="text-xs font-semibold tracking-widest text-slate-400 uppercase">
-                  Terminal Breakdown
-                </h2>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {congestion.terminal_breakdown.map((t) => {
-                    const trc = riskColor(t.risk_label as RiskLabel);
-                    return (
-                      <div key={t.terminal} className={`rounded-lg border p-3 ${trc.bg} ${trc.border}`}>
-                        <div className={`text-sm font-bold font-mono ${trc.text}`}>{t.terminal}</div>
-                        <div className="text-[10px] text-slate-400 mt-1 space-y-0.5">
-                          <div>{t.vessel_count} vessels</div>
-                          <div>Berth: <span className="text-slate-200 font-mono">{t.berth_utilization}%</span></div>
-                          <div>Crane: <span className="text-slate-200 font-mono">{t.crane_utilization}%</span></div>
-                          <div>Queue: <span className="text-slate-200 font-mono">{t.queue_estimate}</span></div>
-                        </div>
-                        <div className={`text-[10px] font-semibold mt-1 ${trc.text}`}>{t.risk_label}</div>
-                      </div>
+          {/* Dynamic Page Routing */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+            <div className={copilotOpen ? "xl:col-span-8" : "xl:col-span-12"}>
+              {currentPage === "overview" && (
+                <OverviewPage
+                  portData={portData}
+                  congestion={congestion}
+                  optimize={optimize}
+                  loadingOpt={loadingOpt}
+                  onOptimize={fetchOptimize}
+                  onNavigatePage={(p) => {
+                    setCurrentPage(p);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  onOpenInfoModal={openInfoModal}
+                  onAuthorizeDispatch={() => {
+                    setToast(
+                      "Directives transmitted to Harbor Master & Harbor Pilots via VHF Link. COSCO-DELTA diverted to T2-01."
                     );
-                  })}
-                </div>
-              </section>
-            )}
-
-            {/* Berth status grid */}
-            {portData && (
-              <section className="bg-slate-800 border border-slate-700 rounded-lg p-4">
-                <BerthGrid
-                  berths={
-                    congestion?.terminal_breakdown
-                      ? portData.berth_records.filter((b) =>
-                          congestion.terminal_breakdown.some((t) => t.terminal === b.terminal)
-                        )
-                      : portData.berth_records
-                  }
+                    setTimeout(() => setToast(null), 6000);
+                  }}
                 />
-              </section>
+              )}
+
+              {currentPage === "vessels" && (
+                <VesselsPage
+                  portData={portData}
+                  congestion={congestion}
+                  optimize={optimize}
+                  onOpenOptimize={fetchOptimize}
+                />
+              )}
+
+              {currentPage === "terminals" && (
+                <TerminalsPage
+                  portData={portData}
+                  congestion={congestion}
+                  onOpenSimulation={() => setCurrentPage("simulation")}
+                />
+              )}
+
+              {currentPage === "dispatch" && (
+                <DispatchPage
+                  optimize={optimize}
+                  loadingOpt={loadingOpt}
+                  onOptimize={fetchOptimize}
+                  onAuthorizeDispatch={() => {
+                    setToast(
+                      "Directives transmitted to Harbor Master & Harbor Pilots via VHF Link. COSCO-DELTA diverted to T2-01."
+                    );
+                    setTimeout(() => setToast(null), 6000);
+                  }}
+                />
+              )}
+
+              {currentPage === "simulation" && portData && (
+                <SimulationPage
+                  portId={PORT_ID}
+                  apiUrl={API_URL}
+                  berths={portData.berth_records}
+                  cranes={portData.crane_records}
+                />
+              )}
+
+              {currentPage === "reports" && (
+                <ReportsPage portId={PORT_ID} apiUrl={API_URL} />
+              )}
+            </div>
+
+            {/* Slide-out / Side Copilot Panel (when open) */}
+            {copilotOpen && (
+              <div className="xl:col-span-4 xl:sticky xl:top-20 animate-fadeIn">
+                <CopilotChat portId={PORT_ID} apiUrl={API_URL} />
+              </div>
             )}
-
-            {/* Recommendations panel */}
-            <RecommendationsPanel
-              data={optimize}
-              loading={loadingOpt}
-              onOptimize={fetchOptimize}
-            />
           </div>
+        </main>
 
-          {/* Right column: Copilot */}
-          <div className="xl:sticky xl:top-20 xl:self-start">
-            <CopilotChat portId={PORT_ID} apiUrl={API_URL} />
-          </div>
-        </div>
-      </main>
+        {/* Footer */}
+        <footer className="mt-auto border-t border-ocean-border/60 bg-ocean-base text-[#85A1AF] py-6 px-4 sm:px-8">
+          <div className="max-w-[1600px] mx-auto flex flex-col md:flex-row items-center justify-between gap-4 text-xs font-sono">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-white">
+                PORT<span className="text-brand-cyan">AI</span>
+              </span>
+              <span>·</span>
+              <span>Maritime Operations Suite</span>
+              <span>·</span>
+              <span className="text-brand-green">CP-SAT Engine Active</span>
+            </div>
 
-      {/* ── Footer ─────────────────────────────────────────────────────────── */}
-      <footer className="mt-12 border-t border-slate-800/80 bg-slate-950/80 backdrop-blur-sm text-slate-400 py-8 px-4 sm:px-6">
-        <div className="max-w-screen-2xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
-          {/* Brand & Mission */}
-          <div className="space-y-1 text-center md:text-left">
-            <div className="flex items-center justify-center md:justify-start gap-2">
-              <span className="text-base font-extrabold tracking-tight text-white">
-                PORT<span className="text-indigo-400">AI</span>
-              </span>
-              <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-800 font-mono">
-                v0.1.0
-              </span>
-              <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-mono">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Live Engine Active
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 max-w-md">
-              AI-driven Container Congestion Predictor, Berth & Crane Optimizer, and 72-Hour Shift Operations Planner.
-            </p>
-          </div>
-
-          {/* Quick Specifications */}
-          <div className="flex flex-wrap items-center justify-center gap-3 text-xs font-mono text-slate-400">
-            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
-              <span className="text-slate-500">Terminals:</span>
-              <span className="text-white font-semibold">
-                {congestion?.terminal_breakdown?.length
-                  ? `${congestion.terminal_breakdown.length} (${congestion.terminal_breakdown.map((t) => t.terminal).join(", ")})`
-                  : `${portData?.terminals ?? 0}`}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
-              <span className="text-slate-500">Berths:</span>
-              <span className="text-white font-semibold">
-                {congestion?.terminal_breakdown && portData?.berth_records
-                  ? portData.berth_records.filter((b) =>
-                      congestion.terminal_breakdown.some((t) => t.terminal === b.terminal)
-                    ).length
-                  : portData?.berths ?? 0}
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
-              <span className="text-slate-500">Cranes:</span>
-              <span className="text-white font-semibold">{portData?.cranes ?? 0}</span>
-            </div>
-            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg">
-              <span className="text-slate-500">Yard:</span>
-              <span className="text-white font-semibold">50,000 TEU</span>
-            </div>
-          </div>
-
-          {/* Attribution & Links */}
-          <div className="flex flex-col items-center md:items-end gap-1.5 text-xs text-slate-500">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-4 text-[#678494]">
               <a
                 href={`${API_URL}/docs`}
                 target="_blank"
                 rel="noreferrer"
-                className="hover:text-indigo-400 transition-colors underline decoration-slate-700 underline-offset-4"
+                className="hover:text-brand-cyan transition-colors underline decoration-ocean-border"
               >
-                API Swagger Docs
+                FastAPI Swagger Docs
               </a>
               <span>·</span>
               <button
                 onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-                className="hover:text-slate-300 transition-colors"
+                className="hover:text-white transition-colors"
               >
                 Back to Top ↑
               </button>
             </div>
-            <span className="text-[11px] font-mono text-slate-600">
-              Built for Bob AI Hackathon · Empowering Port Supervisors
+          </div>
+        </footer>
+      </div>
+
+      {/* ── 3. FLOATING COPILOT ACTION BUTTON (BOTTOM RIGHT) ───────────────── */}
+      <div className="fixed bottom-6 right-6 z-40 flex items-center gap-3">
+        <button
+          onClick={() => setCopilotOpen(!copilotOpen)}
+          className="group flex items-center gap-3 pl-3.5 pr-4 py-2.5 rounded-full bg-ocean-surface/95 hover:bg-ocean-elevated border border-brand-cyan/40 hover:border-brand-cyan shadow-[0_0_20px_rgba(40,215,209,0.25)] backdrop-blur-md transition-all cursor-pointer"
+        >
+          <div className="relative flex items-center justify-center w-8 h-8 rounded-full bg-brand-cyan/15 text-brand-cyan group-hover:scale-105 transition-transform">
+            <span className="material-symbols-outlined text-[18px]">smart_toy</span>
+            <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-green opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-brand-green"></span>
             </span>
           </div>
-        </div>
-      </footer>
+          <div className="flex flex-col text-left">
+            <div className="flex items-center gap-2">
+              <span className="font-sono text-xs font-bold text-white tracking-wider uppercase">
+                PORTAI COPILOT
+              </span>
+              <span className="text-[10px] font-sono text-brand-green font-semibold uppercase px-1.5 py-0.2 rounded bg-brand-green/10">
+                ONLINE
+              </span>
+            </div>
+            <span className="text-[11px] font-sono text-brand-red flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-brand-red animate-pulse"></span>
+              {copilotOpen ? "Click to Close" : "T1 Bottleneck Alert · Open"}
+            </span>
+          </div>
+          <div className="hidden sm:flex items-center gap-1.5 pl-2 border-l border-ocean-border/80 text-[10px] font-sono text-[#85A1AF]">
+            <kbd className="px-1.5 py-0.5 rounded bg-ocean-base border border-ocean-border text-white text-[10px]">
+              ⌘K
+            </kbd>
+          </div>
+        </button>
+      </div>
 
-      {/* ── Modals ──────────────────────────────────────────────────────────── */}
-      {showSimulate && portData && (
-        <SimulateModal
-          portId={PORT_ID}
-          apiUrl={API_URL}
-          berths={portData.berth_records}
-          cranes={portData.crane_records}
-          onClose={() => setShowSimulate(false)}
-        />
+      {/* ── 4. GENERIC POPUP MODAL ────────────────────────────────────────── */}
+      {genericModal.open && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-ocean-surface border border-ocean-border rounded-xl w-full max-w-lg shadow-2xl p-6 relative">
+            <div className="flex items-center justify-between pb-3 border-b border-ocean-border">
+              <h3 className="font-sono text-base font-bold text-white">{genericModal.title}</h3>
+              <button onClick={closeInfoModal} className="text-[#85A1AF] hover:text-white">
+                <span className="material-symbols-outlined text-xl">close</span>
+              </button>
+            </div>
+            <div className="py-4 text-sm text-[#D3E4EC] leading-relaxed whitespace-pre-line font-sans">
+              {genericModal.body}
+            </div>
+            <div className="pt-3 border-t border-ocean-border flex justify-end gap-3">
+              <button
+                onClick={closeInfoModal}
+                className="px-4 py-2 rounded bg-ocean-elevated text-xs font-sono text-white hover:bg-ocean-border transition-colors"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
       )}
-      {showReport && (
-        <ReportModal
-          portId={PORT_ID}
-          apiUrl={API_URL}
-          onClose={() => setShowReport(false)}
-        />
-      )}
+
+      {/* ── 5. OPTIMIZE PROMPT MODAL ──────────────────────────────────────── */}
       {showOptimizePrompt && (
         <OptimizePromptModal
           vesselsCount={promptCounts.vessels}
@@ -490,12 +564,12 @@ export default function App() {
           onOptimize={() => {
             setShowOptimizePrompt(false);
             fetchOptimize();
-            setToast("AI Optimization complete! Wait times reduced by 53.6%.");
-            setTimeout(() => setToast(null), 5000);
           }}
           onDismiss={() => {
             setShowOptimizePrompt(false);
-            setToast("Operating in standard baseline schedule (FCFS). Click 'Optimize' anytime to run AI allocation.");
+            setToast(
+              "Operating in standard baseline schedule (FCFS). Click 'Run Optimizer' anytime."
+            );
             setTimeout(() => setToast(null), 6000);
           }}
         />
