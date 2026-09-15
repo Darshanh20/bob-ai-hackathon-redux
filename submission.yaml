@@ -9,51 +9,50 @@
 # =============================================================================
 
 team:
-  name: ""                             # REQUIRED — e.g., "Orion Squad"
-  track: ""                            # REQUIRED — one of: AI | DevOps | Sustainability | Open
+  name: "Redux"                                # REQUIRED — e.g., "Orion Squad"
+  track: "AI"                                  # REQUIRED — one of: AI | DevOps | Sustainability | Open
   lead:
-    name: ""                           # REQUIRED — e.g., "Alice Chen"
-    email: ""                          # REQUIRED — e.g., "alice.chen@ibm.com"
+    name: "Om Chauhan"                         # REQUIRED — e.g., "Alice Chen"
+    email: "odchauhan0702@email.com"                # REQUIRED — e.g., "alice.chen@ibm.com"
   members:
-    - name: ""                         # REQUIRED — Team member 1
-      email: ""
-    - name: ""                         # Add more members by copying the two lines above
-      email: ""
-    - name: ""
+    - name: "Darshan Hotchandani"              # REQUIRED — Team member 1
+      email: "darshanhotchandani07@gmail.com"
+    - name: "Shreya Patel"                     # Add more members by copying the two lines above
+      email: "23dit052@charusat.edu.in"
+    - name: "Ansh Patel"
       email: ""
 
 submission:
-  title: ""                            # REQUIRED — Project display name, e.g., "SmartOps Dashboard"
+  title: "PORTAI — Autonomous Port Congestion Predictor & Shift Planner" # REQUIRED — Project display name
 
-  problem_statement: >                 # REQUIRED — 1-3 sentences. What problem? Who has it?
-    Replace this text with a concise description of the real-world problem
-    your project addresses and who experiences it.
+  problem_statement: >                         # REQUIRED — 1-3 sentences. What problem? Who has it?
+    Port dispatch and operations teams must coordinate vessel arrivals, berth capacity, crane availability, and cargo priority in high-throughput harbors.
+    Spreadsheet-based and first-come-first-served workflows make harbor congestion, vessel delays, and equipment outages difficult to detect and mitigate early enough to prevent multi-million-dollar demurrage penalties.
 
-  solution_summary: >                  # REQUIRED — 1-3 sentences. What did you build?
-    Replace this text with a clear description of your solution
-    and how it addresses the problem above.
+  solution_summary: >                          # REQUIRED — 1-3 sentences. What did you build?
+    PORTAI ingests vessel schedules, calculates explainable terminal congestion across a 72-hour predictive horizon, and automatically generates optimal berth and crane allocations.
+    It includes an in-memory What-If incident simulator for equipment failures and an AI operations copilot for natural language dispatch briefings.
 
-  key_features:                        # REQUIRED — List 3 to 5 specific features you implemented
-    - ""                               # e.g., "Real-time pipeline anomaly detection using watsonx.ai"
-    - ""
-    - ""
-    - ""                               # optional 4th
-    - ""                               # optional 5th
+  key_features:                                # REQUIRED — List 3 to 5 specific features you implemented
+    - "Automated Vessel Schedule Ingestion with validation for ETAs, ETDs, TEU volume, ship dimensions, and cargo priority"
+    - "72-Hour Predictive Congestion Engine scoring rolling time horizons (NOW, 24H, 48H, 72H) across multiple terminal sectors"
+    - "Priority-Aware Berth & STS Crane Optimizer cutting fleet dwell time by 40%-55% with alternate terminal rerouting"
+    - "In-Memory What-If Disruption Simulator testing berth closures and crane outages without modifying persisted database state"
+    - "Conversational AI Operations Copilot and automated 72-Hour Executive Shift Briefing generator"
 
   tech_stack:
-    languages: []                      # REQUIRED — e.g., ["Python", "TypeScript"]
-    frameworks: []                     # e.g., ["FastAPI", "React"]
-    ibm_technologies: []               # e.g., ["watsonx.ai", "IBM Bob", "IBM Cloud Functions"]
-    databases: []                      # e.g., ["PostgreSQL", "Redis"]
-    other: []                          # e.g., ["Docker", "GitHub Actions", "Slack API"]
+    languages: ["Python", "TypeScript"]        # REQUIRED — e.g., ["Python", "TypeScript"]
+    frameworks: ["FastAPI", "React", "Tailwind CSS"] # e.g., ["FastAPI", "React"]
+    ibm_technologies: ["IBM Bob"]              # e.g., ["watsonx.ai", "IBM Bob", "IBM Cloud Functions"]
+    databases: ["SQLite", "SQLAlchemy"]        # e.g., ["PostgreSQL", "Redis"]
+    other: ["Uvicorn", "Anthropic Claude API", "Google Gemini API", "pandas"] # e.g., ["Docker", "GitHub Actions", "Slack API"]
 
-  what_we_are_most_proud_of: >         # Optional but recommended — guides judges to your best work
-    Replace with what aspect of the submission you consider strongest
-    and want judges to pay special attention to.
+  what_we_are_most_proud_of: >                 # Optional but recommended — guides judges to your best work
+    PORTAI's strongest capability is its cohesive end-to-end operational workflow: seamless CSV manifest ingestion, real-time mathematical congestion scoring, priority-aware berth and crane gang dispatching, non-destructive disruption simulation, and grounded AI shift briefings all unified in an intuitive, high-density dark command center UI.
+    The in-memory What-If simulator is particularly powerful, enabling harbor masters to test crane or berth outages without impacting production schedules.
 
-  known_limitations: >                 # Optional but recommended — be honest about gaps
-    Replace with any known limitations, incomplete features,
-    or shortcuts taken due to time constraints.
+  known_limitations: >                         # Optional but recommended — be honest about gaps
+    SQLite is used for local demonstration rather than a distributed cloud database; the optimizer uses a greedy heuristic constraint solver rather than a mixed-integer programming solver; authentication and user roles (Harbor Master vs Pilot) are not yet integrated; and the AI Copilot falls back to deterministic database-derived responses if external LLM API keys are not supplied.
 
 # =============================================================================
 # ARTIFACT LOCATIONS
@@ -63,7 +62,7 @@ artifacts:
   source_code: "src/"
   setup_guide: "docs/setup-guide.md"
   architecture_doc: "docs/architecture.md"
-  demo_video: "demo/demo-video-link.txt"   # URL to hosted video (YouTube, Loom, Box)
-  live_demo: "demo/live-demo-url.txt"      # URL to deployed demo (optional)
+  demo_video: "demo/demo-video-link.txt"       # URL to hosted video (YouTube, Loom, Box)
+  live_demo: "demo/live-demo-url.txt"          # URL to deployed demo (optional)
   screenshots: "demo/screenshots/"
   presentation: "presentation/"
