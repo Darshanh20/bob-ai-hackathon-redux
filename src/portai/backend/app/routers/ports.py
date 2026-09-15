@@ -11,12 +11,13 @@ GET  /ports/{port_id}/report               – structured 72-hour operations rep
 GET  /ports/{port_id}/copilot/explain/{t}  – AI explanation for a terminal's risk
 """
 
+import csv
 import io
 import os
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, timedelta
 from typing import Any
 
-import pandas as pd
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -90,6 +91,22 @@ def _vessel_to_dict(v: Vessel) -> dict:
     }
 
 
+def _parse_csv_datetime(value: str, column: str, row_number: int) -> datetime:
+    text = str(value or "").strip()
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            pass
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Row {row_number}: column '{column}' contains an unparseable date: {text}",
+        ) from exc
+
+
 # ── 1. GET /ports/{port_id} ───────────────────────────────────────────────────
 
 @router.get("/{port_id}")
@@ -103,7 +120,7 @@ def get_port(port_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
             now_dt = datetime.utcnow()
             for a in assignments:
                 start = datetime.fromisoformat(a["scheduled_start"])
-                end = start + pd.Timedelta(hours=a.get("service_hours", 4)).to_pytimedelta()
+                end = start + timedelta(hours=a.get("service_hours", 4))
                 if start <= now_dt < end:
                     occupied.add(a["berth_code"])
             # If current real clock is outside window, display first active wave
@@ -111,7 +128,7 @@ def get_port(port_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
                 earliest = min(datetime.fromisoformat(a["scheduled_start"]) for a in assignments)
                 for a in assignments:
                     start = datetime.fromisoformat(a["scheduled_start"])
-                    if start <= earliest + pd.Timedelta(hours=4).to_pytimedelta():
+                    if start <= earliest + timedelta(hours=4):
                         occupied.add(a["berth_code"])
     except Exception:
         occupied = set()
@@ -165,6 +182,91 @@ async def upload_vessels(
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded") from exc
+
+    reader = csv.DictReader(io.StringIO(text))
+    missing = REQUIRED_COLS - set(reader.fieldnames or [])
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required columns: {sorted(missing)}",
+        )
+
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(status_code=400, detail="CSV has no data rows")
+
+    db.query(Vessel).filter(Vessel.port_id == port_id).delete()
+
+    vessels: list[Vessel] = []
+    terminals: set[str] = set()
+    priority_breakdown: Counter[str] = Counter()
+    size_breakdown: Counter[str] = Counter()
+    etas: list[datetime] = []
+
+    for row_number, row in enumerate(rows, start=2):
+        size = str(row["Size"]).strip().lower()
+        priority = str(row["Priority"]).strip().lower()
+        terminal = str(row["Terminal"]).strip()
+
+        if size not in VALID_SIZES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Row {row_number}: invalid Size '{row['Size']}'. Allowed: {sorted(VALID_SIZES)}",
+            )
+        if priority not in VALID_PRIOS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Row {row_number}: invalid Priority '{row['Priority']}'. Allowed: {sorted(VALID_PRIOS)}",
+            )
+
+        try:
+            containers = int(str(row["Containers"]).strip())
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Row {row_number}: Containers must be an integer",
+            ) from exc
+
+        eta = _parse_csv_datetime(row["ETA"], "ETA", row_number)
+        etd = _parse_csv_datetime(row["ETD"], "ETD", row_number)
+
+        v = Vessel(
+            port_id     = port_id,
+            vessel_code = str(row["Vessel ID"]).strip(),
+            eta         = eta,
+            etd         = etd,
+            containers  = containers,
+            size        = size,
+            priority    = priority,
+            terminal    = terminal,
+        )
+        vessels.append(v)
+        db.add(v)
+        terminals.add(terminal)
+        priority_breakdown[priority] += 1
+        size_breakdown[size] += 1
+        etas.append(eta)
+
+    db.commit()
+
+    return {
+        "message":           "Vessel schedule uploaded successfully",
+        "port_id":           port_id,
+        "port_name":         port.name,
+        "vessels_imported":  len(vessels),
+        "eta_range": {
+            "earliest": min(etas).isoformat(),
+            "latest":   max(etas).isoformat(),
+        },
+        "terminals_covered": sorted(terminals),
+        "priority_breakdown": dict(priority_breakdown),
+        "size_breakdown":     dict(size_breakdown),
+    }
 
     # ── parse CSV ─────────────────────────────────────────────────────────────
     try:
@@ -266,9 +368,10 @@ def clear_vessels(port_id: int, db: Session = Depends(get_db)) -> dict[str, Any]
 
 @router.get("/{port_id}/sample-csv")
 def get_sample_csv(port_id: int):
-    sample_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "data", "sample_vessel_schedule.csv")
-    )
+    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    sample_path = os.path.join(backend_dir, "app", "data", "sample_vessel_schedule.csv")
+    if not os.path.exists(sample_path):
+        sample_path = os.path.join(backend_dir, "PORTAI_Vessel_Arrivals_Test.csv")
     if not os.path.exists(sample_path):
         raise HTTPException(status_code=404, detail="Sample CSV not found")
     return FileResponse(
