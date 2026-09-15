@@ -1,6 +1,6 @@
-# 🚀 [Your Project Title Here]
+# 🚀 PORTAI — Autonomous Port Congestion Predictor & Shift Planner
 
-> ⚠️ **Replace everything in `[ ]` brackets with your actual content before submission.**
+> PORTAI helps port operations teams predict congestion, optimize berth and crane assignments, and test disruption scenarios from one operational dashboard.
 
 ---
 
@@ -8,36 +8,32 @@
 
 | Field | Value |
 |---|---|
-| **Team Name** | [Your Team Name] |
-| **Track** | [AI / DevOps / Sustainability / Open] |
-| **Team Lead** | [Name] — [email@ibm.com] |
-| **Members** | [Name 1], [Name 2], [Name 3] |
+| **Team Name** | Redux |
+| **Track** | AI |
+| **Team Lead** | Om Chauhan |
+| **Members** | Darshan Hotchandani, Shreya Patel, Ansh Patel |
 
 ---
 
 ## 🎯 Problem Statement
 
-> In 2–3 sentences: What problem does your project solve? Who experiences this problem?
-
-[Describe the real-world problem your project addresses. Be specific about who the user is and what pain point they face.]
+Port dispatch and operations teams must coordinate vessel arrivals, berth capacity, crane availability, and cargo priority while conditions change throughout the day. Spreadsheet-based and first-come-first-served workflows make congestion, vessel risk, and the impact of equipment outages difficult to see early enough to act.
 
 ---
 
 ## 💡 Solution
 
-> In 2–3 sentences: What did you build? How does it solve the problem above?
-
-[Describe your solution clearly. Explain the core mechanism — what makes it work.]
+PORTAI ingests vessel schedules, calculates explainable terminal congestion and risk, forecasts conditions across the next 72 hours, and recommends berth and crane allocations. Its what-if simulator tests berth or crane outages without changing persisted data, while an AI copilot answers operational questions and generates a structured report.
 
 ---
 
 ## ✨ Key Features
 
-- **Feature 1:** [Brief description — e.g., "Real-time anomaly detection using watsonx.ai"]
-- **Feature 2:** [Brief description]
-- **Feature 3:** [Brief description]
-- **Feature 4:** [Optional]
-- **Feature 5:** [Optional]
+- **Schedule ingestion:** Upload and validate vessel schedules with ETA, ETD, container, size, priority, and terminal data.
+- **72-hour forecasting:** Calculate terminal congestion, queue pressure, utilization, and risk levels across rolling time windows.
+- **Dispatch optimization:** Create priority-aware berth assignments and distribute cranes, with comparison against first-come-first-served scheduling.
+- **What-if simulation:** Model berth or crane outages and compare congestion, queues, wait times, and reassignments before and after the disruption.
+- **AI operations copilot:** Ask about vessel risk, terminal status, forecasts, and recommendations or generate a 72-hour operations report.
 
 ---
 
@@ -45,11 +41,11 @@
 
 | Category | Technologies |
 |---|---|
-| **Languages** | [e.g., Python, TypeScript] |
-| **Frameworks** | [e.g., FastAPI, React] |
-| **IBM Technologies** | [e.g., watsonx.ai, IBM Bob, IBM Cloud] |
-| **Databases** | [e.g., PostgreSQL, Redis] |
-| **Other** | [e.g., Docker, GitHub Actions] |
+| **Languages** | Python, TypeScript |
+| **Frameworks** | FastAPI, React 18, Tailwind CSS |
+| **IBM Technologies** | IBM Bob |
+| **Databases** | SQLite via SQLAlchemy |
+| **Other** | Uvicorn, pandas, Google Gemini API, python-dotenv, browser localStorage |
 
 ---
 
@@ -76,20 +72,23 @@
 > **Copy these exact steps from your [`docs/setup-guide.md`](docs/setup-guide.md)**
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/[your-repo].git
-cd [your-repo]
+# 1. From the repository root, install backend dependencies
+cd src/portai/backend
+pip install -r requirements.txt
 
-# 2. Install dependencies
-[your install command here]
+# 2. Seed the local demo database
+python -m app.services.seed_data
 
-# 3. Configure environment
-cp .env.example .env
-# Edit .env with your values
+# 3. Start the backend
+uvicorn app.main:app --reload --port 8000
 
-# 4. Run the project
-[your run command here]
+# 4. In a second terminal, install and start the frontend
+cd src/portai/frontend
+npm install
+npm start
 ```
+
+The frontend is available at `http://localhost:3000`. The backend health check is `http://localhost:8000/health`. A Gemini API key is optional; without one, the copilot uses deterministic database-derived fallback responses.
 
 ---
 
@@ -97,10 +96,10 @@ cp .env.example .env
 
 | Artifact | Link |
 |---|---|
-| 📹 Demo Video | [See demo/demo-video-link.txt](demo/demo-video-link.txt) |
-| 🌐 Live Demo | [See demo/live-demo-url.txt](demo/live-demo-url.txt) |
+| 📹 Demo Video | No published demo video link is available; see [demo/demo-video-link.txt](demo/demo-video-link.txt) |
+| 🌐 Live Demo | No deployed live demo is available; see [demo/live-demo-url.txt](demo/live-demo-url.txt) |
 | 🖼️ Screenshots | [See demo/screenshots/](demo/screenshots/) |
-| 📊 Presentation | [See presentation/slides.pdf](presentation/) |
+| 📊 Presentation | [See presentation/](presentation/) |
 
 ---
 
@@ -108,14 +107,17 @@ cp .env.example .env
 
 > Be honest — judges appreciate transparency over overclaiming.
 
-- [Limitation 1: e.g., "Authentication is mocked — not production-ready"]
-- [Limitation 2: e.g., "Only tested on Chrome"]
-- [Limitation 3: e.g., "Feature X is scaffolded but not fully implemented"]
+- Team and submission metadata are not yet filled in.
+- SQLite is intended for local demonstration and is not configured for concurrent production deployment.
+- The optimizer is a synchronous greedy heuristic rather than a formal mathematical optimization solver.
+- Authentication and authorization are not implemented, and CORS is limited to `http://localhost:3000`.
+- Gemini features depend on an API key and network access, although deterministic fallbacks are available.
+- No automated project test suite or completed hosted demo artifacts are included.
 
 ---
 
 ## 🏅 What We're Most Proud Of
 
-[Tell the judges what part of your submission is strongest and worth paying close attention to.]
+PORTAI's strongest aspect is its end-to-end operational workflow: schedule ingestion, explainable congestion scoring, priority-aware berth and crane dispatch, disruption simulation, and AI-assisted reporting are connected in one usable dashboard. The simulator is especially useful because it evaluates outage impact on cloned in-memory state without modifying the persisted schedule.
 
 ---
