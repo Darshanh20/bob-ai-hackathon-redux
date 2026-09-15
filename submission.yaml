@@ -20,7 +20,7 @@ team:
     - name: "Shreya Patel"                     # Add more members by copying the two lines above
       email: "23dit052@charusat.edu.in"
     - name: "Ansh Patel"
-      email: ""
+      email: "anshgpatel017@gmail.com"
 
 submission:
   title: "PORTAI — Autonomous Port Congestion Predictor & Shift Planner" # REQUIRED — Project display name
